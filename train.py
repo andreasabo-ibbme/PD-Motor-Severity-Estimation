@@ -42,13 +42,16 @@ print(C)
 
 # K-Fold Cross Validation
 def leaveoneout(params):
+    walks_per_fold = []
     test_acc = []
     predicted_final_classes = []
     predicted_classes = []
     prediction_list = []
     true_labels = []
     accumulated_test_list = []
+    test_walk_names = []
     
+
     lr = params['lr']
     epochs = params['epochs']
     batch_size = params['batch_size']
@@ -64,11 +67,13 @@ def leaveoneout(params):
         Train = pickle.load(open(C['data_dir']+"EPG_train_" + str(i) + ".pkl", "rb"))
         Test = pickle.load(open(C['data_dir']+"EPG_test_" + str(i) + ".pkl", "rb"))
         Test_list = pickle.load(open(C['data_dir']+"EPG_test_list_" + str(i) + ".pkl", "rb"))
-        accumulated_test_list.append(Test_list[0])
+
+        test_name = Test_list[0]                        # Extract the AMBID from the name of the video (eg. AMB25) 
+        accumulated_test_list.append(test_name)
+        test_walk_names.extend(Test_list)               # Full identifier of the video (eg. 2011_12_11__ID27). Will have a list of these
 
         X_0,X_1,Y = data_generator(Train,C,result="classification")
         X_test_0,X_test_1,Y_test = data_generator(Test,C,result="classification")
-        test_name = Test_list[0]
 
         lrScheduler = keras.callbacks.ReduceLROnPlateau(monitor='loss', factor=0.5, patience=5, cooldown=5, min_lr=1e-7)
 
@@ -86,6 +91,7 @@ def leaveoneout(params):
                 validation_data=([X_test_0,X_test_1],Y_test)
                 )
 
+
         # Evaluate and store predictions
         print('\n# Evaluate on test data')
         results = DD_Net.evaluate([X_test_0, X_test_1], Y_test, batch_size=len(Y_test))
@@ -95,6 +101,7 @@ def leaveoneout(params):
         print('\n# Generate predictions')
         predictions = DD_Net.predict([X_test_0, X_test_1])
         test_acc.append(results[1])
+        walks_per_fold.append(len(results))
         pred_classes = get_predicted_class(predictions)
         pred_class = total_video_vote(predictions)
         prediction_list.append(predictions)
@@ -103,7 +110,8 @@ def leaveoneout(params):
         predicted_final_classes.append(pred_class)
         test_acc_dict = {}
         for i in range(len(test_acc)):
-            test_acc_dict[accumulated_test_list[i]] = test_acc[i]
+            test_acc_dict[accumulated_test_list[i]] = test_acc[i]   # accumulated_test_list[i] is the name of walk originally (only one walk in original, but now its a list). 
+                                                                    # Instead of accumulated_test_list[i], use the AMBID
             print(accumulated_test_list[i] + " accuracy: " + str(test_acc[i]))
 
         del Train, Test, Test_list, history, X_0, X_1, Y
@@ -111,11 +119,15 @@ def leaveoneout(params):
         #K.clear_session()
 
         # Save results
+        average_test_accuracy = 0
         if len(test_acc) != 0:
-            average_test_accuracy = sum(test_acc) / len(test_acc)
+            total_test_walks = sum(walks_per_fold)
+            for fold in test_acc:
+                average_test_accuracy = test_acc[fold] * walks_per_fold[fold]
+            
+            average_test_accuracy = average_test_accuracy / total_test_walks
             print("final average test accuracy:", average_test_accuracy)
-        else:
-            average_test_accuracy = 0
+
 
         if 'run_name' in params:
             jsonfilename = args.model_dir + params['run_name'] + 'results.json'
@@ -124,7 +136,7 @@ def leaveoneout(params):
         else:
             jsonfilename = args.model_dir + 'results.json'
 
-        prediction_non_np = [x.tolist() for x in prediction_list]
+        prediction_non_np = [x.tolist() for x in prediction_list]  # Convert from np to list?
         attributes = [average_test_accuracy, test_acc_dict, predicted_classes, predicted_final_classes, prediction_non_np, true_labels, params]
         names = ["average_test_accuracy", "test_acc_dict", "predicted_classes", "predicted_final_classes", "prediction_list", "true_labels", "params"]
         save_json(jsonfilename, attributes, names)
@@ -133,4 +145,5 @@ def leaveoneout(params):
 
 if __name__ == "__main__":
     print("Training...")
+    
     leaveoneout(C)
